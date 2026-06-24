@@ -1,0 +1,100 @@
+name: Prepare HACS submission branches
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - .github/workflows/prepare-hacs-submissions.yml
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - branch: hacs/add-homeassistant-teltonika-rms
+            file: integration
+            repository: derliebemarcus/homeassistant_teltonika_rms
+            anchor: '  "denysdovhan/ha-yasno-outages",'
+            next: '  "dermotduffy/hass-web-proxy-integration",'
+          - branch: hacs/add-homeassistant-zurichsee
+            file: integration
+            repository: derliebemarcus/homeassistant_zurichsee
+            anchor: '  "denysdovhan/ha-yasno-outages",'
+            next: '  "dermotduffy/hass-web-proxy-integration",'
+          - branch: hacs/add-homeassistant-custom-dishwasher-card
+            file: plugin
+            repository: derliebemarcus/homeassistant_custom_dishwasher_card
+            anchor: '  "denysdovhan/vacuum-card",'
+            next: '  "dermotduffy/advanced-camera-card",'
+          - branch: hacs/add-homeassistant-custom-oven-card
+            file: plugin
+            repository: derliebemarcus/homeassistant_custom_oven_card
+            anchor: '  "denysdovhan/vacuum-card",'
+            next: '  "dermotduffy/advanced-camera-card",'
+          - branch: hacs/add-homeassistant-custom-refrigerator-card
+            file: plugin
+            repository: derliebemarcus/homeassistant_custom_refrigerator_card
+            anchor: '  "denysdovhan/vacuum-card",'
+            next: '  "dermotduffy/advanced-camera-card",'
+
+    steps:
+      - name: Check out fork
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Start from upstream master
+        run: |
+          git fetch https://github.com/hacs/default.git master
+          git switch --detach FETCH_HEAD
+          git switch -c "${{ matrix.branch }}"
+
+      - name: Insert one repository entry
+        env:
+          FILE: ${{ matrix.file }}
+          REPOSITORY: ${{ matrix.repository }}
+          ANCHOR: ${{ matrix.anchor }}
+          EXPECTED_NEXT: ${{ matrix.next }}
+        run: |
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ["FILE"])
+          entry = f'  "{os.environ["REPOSITORY"]}",'
+          anchor = os.environ["ANCHOR"]
+          expected_next = os.environ["EXPECTED_NEXT"]
+          lines = path.read_text(encoding="utf-8").splitlines()
+
+          if entry in lines:
+              raise SystemExit(f"Entry already exists: {entry}")
+
+          indexes = [index for index, line in enumerate(lines) if line == anchor]
+          if len(indexes) != 1:
+              raise SystemExit(f"Expected one anchor, found {len(indexes)}")
+
+          index = indexes[0]
+          if lines[index + 1] != expected_next:
+              raise SystemExit(
+                  f"Unexpected line after anchor: {lines[index + 1]!r}"
+              )
+
+          lines.insert(index + 1, entry)
+          path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+
+      - name: Validate and push branch
+        run: |
+          git diff --check
+          test "$(git diff --numstat -- '${{ matrix.file }}')" = $'1\t0\t${{ matrix.file }}'
+          test "$(git diff --name-only | wc -l | tr -d ' ')" = 1
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "${{ matrix.file }}"
+          git commit -m "Add ${{ matrix.repository }}"
+          git push origin "HEAD:refs/heads/${{ matrix.branch }}"
