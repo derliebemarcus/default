@@ -1,0 +1,86 @@
+name: Prepare HACS submissions from PR
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - .github/hacs-submission-trigger
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - branch: hacs/add-homeassistant-teltonika-rms
+            file: integration
+            repository: derliebemarcus/homeassistant_teltonika_rms
+            anchor: '  "denysdovhan/ha-yasno-outages",'
+            next: '  "dermotduffy/hass-web-proxy-integration",'
+          - branch: hacs/add-homeassistant-zurichsee
+            file: integration
+            repository: derliebemarcus/homeassistant_zurichsee
+            anchor: '  "denysdovhan/ha-yasno-outages",'
+            next: '  "dermotduffy/hass-web-proxy-integration",'
+          - branch: hacs/add-homeassistant-custom-dishwasher-card
+            file: plugin
+            repository: derliebemarcus/homeassistant_custom_dishwasher_card
+            anchor: '  "denysdovhan/vacuum-card",'
+            next: '  "dermotduffy/advanced-camera-card",'
+          - branch: hacs/add-homeassistant-custom-oven-card
+            file: plugin
+            repository: derliebemarcus/homeassistant_custom_oven_card
+            anchor: '  "denysdovhan/vacuum-card",'
+            next: '  "dermotduffy/advanced-camera-card",'
+          - branch: hacs/add-homeassistant-custom-refrigerator-card
+            file: plugin
+            repository: derliebemarcus/homeassistant_custom_refrigerator_card
+            anchor: '  "denysdovhan/vacuum-card",'
+            next: '  "dermotduffy/advanced-camera-card",'
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare one branch
+        env:
+          BRANCH: ${{ matrix.branch }}
+          FILE: ${{ matrix.file }}
+          REPOSITORY: ${{ matrix.repository }}
+          ANCHOR: ${{ matrix.anchor }}
+          EXPECTED_NEXT: ${{ matrix.next }}
+        run: |
+          git fetch https://github.com/hacs/default.git master
+          git switch --detach FETCH_HEAD
+          git switch -c "$BRANCH"
+          python3 - <<'PY'
+          import os
+          from pathlib import Path
+
+          path = Path(os.environ["FILE"])
+          entry = f'  "{os.environ["REPOSITORY"]}",'
+          anchor = os.environ["ANCHOR"]
+          expected_next = os.environ["EXPECTED_NEXT"]
+          lines = path.read_text(encoding="utf-8").splitlines()
+          indexes = [i for i, line in enumerate(lines) if line == anchor]
+          if entry in lines or len(indexes) != 1:
+              raise SystemExit("Entry already exists or anchor is not unique")
+          index = indexes[0]
+          if lines[index + 1] != expected_next:
+              raise SystemExit("Unexpected next line after anchor")
+          lines.insert(index + 1, entry)
+          path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+          PY
+          git diff --check
+          test "$(git diff --numstat -- "$FILE")" = $'1\t0\t'"$FILE"
+          test "$(git diff --name-only | wc -l | tr -d ' ')" = 1
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$FILE"
+          git commit -m "Add $REPOSITORY"
+          git push origin "HEAD:refs/heads/$BRANCH"
